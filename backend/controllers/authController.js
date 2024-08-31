@@ -1,7 +1,8 @@
 const crud = require('../db/model');
 const bcryptjs = require('bcryptjs');
 const generateTokenAndSetCookie = require('../utils/auth');
-const sendVerificationEmail = require('../mailtrap/emails');
+const { sendVerificationEmail, sendWelcomeEmail, sendPasswordResetEmail } = require('../mailtrap/emails');
+const crypto = require('crypto')
 
 const signUp = async (req, res) => {
     const { email, password, name } = req.body;
@@ -78,6 +79,9 @@ const signIn = async (req, res) => {
         // Generate token and set cookie
         generateTokenAndSetCookie(res, alreadyUser._id);
 
+        alreadyUser.lastLogin = new Date();
+		await alreadyUser.save();
+
         // Send success response
         return res.status(200).json({
             success: true,
@@ -94,7 +98,81 @@ const signIn = async (req, res) => {
     }
 };
 
+const verifyEmail = async (req, res) => {
+    const { code } = req.body;  // Destructure code from the request body
+    
+    try {
+        // Find the user with the matching verificationToken and check if the token is not expired
+        const correctUser = await crud.findOne({
+            verificationToken: code,  
+            verificationTokenExpiresAt: { $gt: Date.now() }
+        });
+
+        // If no user found, send error response
+        if (!correctUser) {
+            return res.status(400).json({ success: false, msg: "The code you are entering is either wrong or expired." });
+        }
+
+        // Mark user as verified and clear the verification token and expiration
+        correctUser.isVerified = true;
+        correctUser.verificationToken = undefined;
+        correctUser.verificationTokenExpiresAt = undefined;
+
+        // Save the updated user
+        await correctUser.save();
+
+
+        await sendWelcomeEmail(correctUser.email, correctUser.name);
+
+        return res.status(200).json({
+            success: true,
+            message: "Logged in successfully",
+            user: {
+                ...correctUser._doc,
+                password: undefined, // Exclude password from response
+            },
+        });
+
+    } catch (error) {
+        console.error('Error in verifyEmail:', error);
+        return res.status(500).json({ success: false, msg: "Server error" });
+    }
+};
+const logout = async (req, res) => {
+	res.clearCookie("token");
+	res.status(200).json({ success: true, message: "Logged out successfully" });
+};
+
+const forgetPassword = async(req,res)=> {
+    const {email} = req.body;
+    try{
+        const checkUser = await crud.findOne({email});
+        if(!checkUser){
+            return res.status(400).json({success:"false", msg:"No User found."});
+        }
+
+        const resetToken = crypto.randomBytes(20).toString("hex");
+		const resetTokenExpiresAt = Date.now() + 1 * 60 * 60 * 1000;
+
+        checkUser.resetPasswordToken = resetToken;
+		checkUser.resetPasswordExpiresAt = resetTokenExpiresAt;
+
+        await checkUser.save();
+
+        await sendPasswordResetEmail(checkUser.email, `${process.env.CLIENT_URL}/reset-password/${resetToken}`);
+
+		res.status(200).json({ success: true, message: "Password reset link sent to your email" });
+    }catch(error){
+        console.log("Error in forgotPassword ", error);
+		res.status(400).json({ success: false, message: error.message });
+    }
+}
+
+
 module.exports = {
     signUp,
-    signIn
+    signIn,
+    logout,
+    verifyEmail,
+    forgetPassword
 };
