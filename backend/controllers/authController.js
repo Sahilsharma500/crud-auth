@@ -1,7 +1,7 @@
 const crud = require('../db/model');
 const bcryptjs = require('bcryptjs');
 const generateTokenAndSetCookie = require('../utils/auth');
-const { sendVerificationEmail, sendWelcomeEmail, sendPasswordResetEmail } = require('../mailtrap/emails');
+const { sendVerificationEmail, sendWelcomeEmail, sendPasswordResetEmail, sendResetSuccessEmail } = require('../mailtrap/emails');
 const crypto = require('crypto')
 
 const signUp = async (req, res) => {
@@ -168,11 +168,58 @@ const forgetPassword = async(req,res)=> {
     }
 }
 
+const resetPassword = async(req, res) => {
+    try{
+        const { token } = req.params;
+		const { password } = req.body;
+
+		const user = await crud.findOne({
+			resetPasswordToken: token,
+			resetPasswordExpiresAt: { $gt: Date.now() },
+		});
+
+		if (!user) {
+			return res.status(400).json({ success: "false", message: "Invalid or expired reset token" });
+		}
+
+		// update password
+		const hashedPassword = await bcryptjs.hash(password, 10);
+
+		user.password = hashedPassword;
+		user.resetPasswordToken = undefined;
+		user.resetPasswordExpiresAt = undefined;
+		await user.save();
+
+		await sendResetSuccessEmail(user.email);
+
+		res.status(200).json({ success: true, message: "Password reset successful" });
+    }catch(error){
+        console.log("Error in resetPassword ", error);
+		res.status(400).json({ success: false, message: error.message });
+    }
+}
+
+const checkAuth = async (req, res) => {
+	try {
+		const user = await crud.findById(req.userId).select("-password");
+		if (!user) {
+			return res.status(400).json({ success: false, message: "User not found" });
+		}
+
+		res.status(200).json({ success: true, user });
+	} catch (error) {
+		console.log("Error in checkAuth ", error);
+		res.status(400).json({ success: false, message: error.message });
+	}
+};
+
 
 module.exports = {
     signUp,
     signIn,
     logout,
     verifyEmail,
-    forgetPassword
+    forgetPassword,
+    resetPassword,
+    checkAuth
 };

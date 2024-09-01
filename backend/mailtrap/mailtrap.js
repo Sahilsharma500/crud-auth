@@ -12,9 +12,6 @@ const sender = {
   name: "Sahil",
 };
 
-
-
-
   module.exports = {
     sender,
     mailtrapClient
